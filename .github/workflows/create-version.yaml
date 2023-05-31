@@ -1,0 +1,13 @@
+name: Create Version of Reusable Workflow
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '*.md'
+  workflow_dispatch:
+
+jobs:
+
+  version-reusable-workflow:
+    uses: ps-aartread-org/version-workflows/.github/workflows/version-workflow.yaml@v0

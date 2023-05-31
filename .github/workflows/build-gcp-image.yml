@@ -1,0 +1,103 @@
+name: Build GCP Docker Image
+on:
+  workflow_call:
+    inputs:
+      buildArgs:
+        required: false
+        type: string
+        description: 'A multiline list of build arguments'
+      environment:
+        required: false
+        default: ''
+        description: 'The GitHub Environment containing the secret variable DOCKER_SECRETS'
+        type: string
+      file:
+        required: false
+        type: string
+        default: 'Dockerfile'
+        description: 'The Dockerfile to use for builds, defaults to Dockerfile'
+      gcpAuthMethod:
+        required: true
+        description: 'The method for authenticating with GCP. Supports workload-identity or credentials_json'
+        default: 'credentials_json'
+        type: string
+      push:
+        required: false
+        type: boolean
+        default: true
+        description: 'Push image to GHCR, defaults to true'
+      ref:
+        required: false
+        default: ''
+        description: 'The specific commitId, Tag, or Branch to checkout. Will use latest if not defined'
+        type: string
+      gcpServiceAccount:
+        required: false
+        type: string
+        description: 'The Service Account used by Workload Identity Federation'
+      tags:
+        required: true
+        type: string
+        description: 'The image tag'
+      workloadIdentityProvider:
+        required: false
+        type: string
+        description: 'The Workload Identity Provider Endpoint'
+
+jobs:
+  buildDockerImage:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    name: Build Docker Image
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.ref }}
+
+      - id: auth_workload
+        if: inputs.gcpAuthMethod == 'workload-identity'
+        name: Authenticate to Google Cloud using Workload Identity Federation
+        uses: google-github-actions/auth@v0
+        with:
+          workload_identity_provider: ${{ inputs.workloadIdentityProvider }}
+          token_format: access_token
+          service_account: ${{ inputs.gcpServiceAccount }}
+
+      - id: auth_json
+        if: inputs.gcpAuthMethod == 'credentials_json'
+        name: Authenticate to Google Cloud using JSON Key
+        uses: google-github-actions/auth@v0
+        with:
+          credentials_json: ${{ secrets.GOOGLE_CREDENTIALS }}
+          token_format: access_token
+
+      - name: Docker Login to GCP using Workload Identity Federation
+        if: inputs.gcpAuthMethod == 'workload-identity'
+        run: |
+          REPOSITORY=$(echo ${{ inputs.tags }} | cut -d / -f1 )
+          echo ${{ steps.auth_workload.outputs.access_token }} | docker login ${REPOSITORY} -u oauth2accesstoken --password-stdin
+
+      - name: Docker Login to GCP using JSON Key
+        if: inputs.gcpAuthMethod == 'credentials_json'
+        run: |
+          REPOSITORY=$(echo ${{ inputs.tags }} | cut -d / -f1 )
+          echo ${{ steps.auth_json.outputs.access_token }} | docker login ${REPOSITORY} -u oauth2accesstoken --password-stdin
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2.2.1
+        with:
+          driver-opts: image=moby/buildkit:v0.10.6
+
+      - name: Build and Push Image
+        uses: docker/build-push-action@v3.2.0
+        with:
+          context: .
+          build-args: |
+            ${{ inputs.buildArgs }}
+          file: ${{ inputs.file }}
+          secrets: |
+            ${{ secrets.DOCKER_SECRETS }}
+          push: true
+          tags: ${{ inputs.tags }}
